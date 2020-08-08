@@ -31,47 +31,49 @@ const stripe = require('stripe')(functions.config().stripe.secret, {
  *
  * @see https://stripe.com/docs/payments/save-and-reuse#web-create-customer
  */
-exports.createStripeCustomer = functions.auth.user().onCreate(async (user) => {
-  const customer = await stripe.customers.create({ email: user.email });
-  const intent = await stripe.setupIntents.create({
-    customer: customer.id,
+exports.createStripeCustomer = functions.firestore
+  .document('profile/{userId}')
+  .onCreate(async (snap, context) => {
+    const customer = await stripe.customers.create({ email: snap.data.email });
+    const intent = await stripe.setupIntents.create({
+      customer: customer.id,
+    });
+    await admin.firestore().collection('stripe_customers').doc(snap.data.user).set({
+      customer_id: customer.id,
+      setup_secret: intent.client_secret,
+    });
+    return;
   });
-  await admin.firestore().collection('stripe_customers').doc(user.uid).set({
-    customer_id: customer.id,
-    setup_secret: intent.client_secret,
-  });
-  return;
-});
 
 /**
  * When adding the payment method ID on the client,
  * this function is triggered to retrieve the payment method details.
  */
-exports.addPaymentMethodDetails = functions.firestore
-  .document('/stripe_customers/{userId}/payment_methods/{pushId}')
-  .onCreate(async (snap, context) => {
-    try {
-      const paymentMethodId = snap.data().id;
-      const paymentMethod = await stripe.paymentMethods.retrieve(
-        paymentMethodId
-      );
-      await snap.ref.set(paymentMethod);
-      // Create a new SetupIntent so the customer can add a new method next time.
-      const intent = await stripe.setupIntents.create({
-        customer: paymentMethod.customer,
-      });
-      await snap.ref.parent.parent.set(
-        {
-          setup_secret: intent.client_secret,
-        },
-        { merge: true }
-      );
-      return;
-    } catch (error) {
-      await snap.ref.set({ error: userFacingMessage(error) }, { merge: true });
-      await reportError(error, { user: context.params.userId });
-    }
-  });
+// exports.addPaymentMethodDetails = functions.firestore
+//   .document('/stripe_customers/{userId}/payment_methods/{pushId}')
+//   .onCreate(async (snap, context) => {
+//     try {
+//       const paymentMethodId = snap.data().id;
+//       const paymentMethod = await stripe.paymentMethods.retrieve(
+//         paymentMethodId
+//       );
+//       await snap.ref.set(paymentMethod);
+//       // Create a new SetupIntent so the customer can add a new method next time.
+//       const intent = await stripe.setupIntents.create({
+//         customer: paymentMethod.customer,
+//       });
+//       await snap.ref.parent.parent.set(
+//         {
+//           setup_secret: intent.client_secret,
+//         },
+//         { merge: true }
+//       );
+//       return;
+//     } catch (error) {
+//       await snap.ref.set({ error: userFacingMessage(error) }, { merge: true });
+//       await reportError(error, { user: context.params.userId });
+//     }
+//   });
 
 /**
  * When a payment document is written on the client,
@@ -123,6 +125,8 @@ exports.createStripePayment = functions.firestore
  *
  * @see https://stripe.com/docs/payments/accept-a-payment-synchronously#web-confirm-payment
  */
+
+// 
 exports.confirmStripePayment = functions.firestore
   .document('stripe_customers/{userId}/payments/{pushId}')
   .onUpdate(async (change, context) => {
